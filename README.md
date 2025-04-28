@@ -1,15 +1,15 @@
 # selfextractingexe
 
-This is a tool to pack directory into one executable, which can extract these packed files out when executed.  
+This is a tool to pack directory into one executable, which can self extract out these packed files when executed.  
 Support Windows and Linux
 
 ## Usage
 
 run 
 ```
-selfextractingexe pack
+./selfextractingexe pack
 ```
-to pack directory that contains **selfextractingexe** self.
+Or just run **selfextractingexe** directly.
 
 The generated **selfextractingexe_packed** can be directly run to extract files. And if "autorun" existed, pass it's content to **system** call. 
 
