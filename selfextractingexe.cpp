@@ -89,7 +89,7 @@ std::vector<size_t> findPatternInStream(std::ifstream& file, const std::vector<c
     return positions;
 }
 
-void packFiles(const std::string& outputExe) {
+void packFiles(const fs::path& outputExe) {
     std::vector<FileInfo> files;
     
     uint64_t currentOffset = 0;
@@ -163,7 +163,7 @@ void packFiles(const std::string& outputExe) {
     exe.write(dataMarker, strlen(dataMarker));
     
     for(const auto& file : files){
-        std::ifstream filedata(file.name,std::ios::binary);
+        std::ifstream filedata(thisDir/file.name,std::ios::binary);
         std::cout<<"Packing file "<<file.name<<std::endl;
         transferData(filedata,exe);
     }
@@ -182,7 +182,7 @@ void extractFiles(const fs::path& inputExe) {
     if (foundMagic.size()==0) {
         fs::path packedFile(*thisExe);
         packedFile.replace_filename(packedFile.stem().string()+"_packed"+packedFile.extension().string());
-        packFiles(packedFile.string());
+        packFiles(packedFile);
         return;
     }
     exe.seekg(foundMagic.at(0)+32,std::ios::beg);
@@ -244,12 +244,28 @@ void extractFiles(const fs::path& inputExe) {
     std::cout << "Successfully extracted " << files.size() << " files." << std::endl;
 }
 
+#ifdef _WIN32
+std::string ConvertToUTF8(const std::string& str) {
+    int wlen = MultiByteToWideChar(CP_ACP, 0, str.c_str(), -1, nullptr, 0);
+    std::wstring wstr(wlen, 0);
+    MultiByteToWideChar(CP_ACP, 0, str.c_str(), -1, wstr.data(), wlen);
+    
+    int ulen = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string utf8str(ulen, 0);
+    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, utf8str.data(), ulen, nullptr, nullptr);
 
-
+    utf8str.resize(ulen - 1);
+    return utf8str;
+}
+#endif
 
 int main(int argc,char *argv[]){
     processMagic();
+    #ifdef _WIN32
+    thisExe=new fs::path(ConvertToUTF8(argv[0]));
+    #else
     thisExe=new fs::path(argv[0]);
+    #endif
     if(!fs::is_regular_file(*thisExe)){
         thisExe->replace_filename(thisExe->filename().string()+".exe");
     }
@@ -265,10 +281,12 @@ int main(int argc,char *argv[]){
         extractFiles(*thisExe);
         fs::path autorun(thisDir/"autorun");
         if(fs::is_regular_file(autorun)){
-            std::vector<char> buffer(BUFFER_SIZE);
             std::ifstream autorunIn(autorun,std::ios::binary);
-            autorunIn.read(buffer.data(),BUFFER_SIZE);
-            system(buffer.data());
+            autorunIn.seekg(0,std::ios::end);
+            std::string buffer(uint32_t(autorunIn.tellg())+1,0);
+            autorunIn.seekg(0,std::ios::beg);
+            autorunIn.read(buffer.data(),buffer.size());
+            system(buffer.c_str());
         }
     }else if(strcmp(argv[1],"pack")==0){
         fs::path packedFile(*thisExe);
