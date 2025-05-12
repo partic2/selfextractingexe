@@ -53,6 +53,26 @@ void transferData(std::ifstream& input, std::ofstream& output) {
     }
 }
 
+#ifdef _WIN32
+std::string ConvertToUTF8(const std::string& str) {
+    int wlen = MultiByteToWideChar(CP_ACP, 0, str.c_str(), -1, nullptr, 0);
+    std::wstring wstr(wlen, 0);
+    MultiByteToWideChar(CP_ACP, 0, str.c_str(), -1, wstr.data(), wlen);
+    
+    int ulen = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string utf8str(ulen, 0);
+    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, utf8str.data(), ulen, nullptr, nullptr);
+
+    utf8str.resize(ulen - 1);
+    return utf8str;
+}
+std::wstring U8ToWchar(const std::string& str){
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
+    std::wstring wstr(wlen, 0);
+    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, wstr.data(), wlen);
+    return wstr;
+}
+#endif
 
 std::vector<size_t> findPatternInStream(std::ifstream& file, const std::vector<char>& pattern,int count) {
     std::vector<size_t> positions;
@@ -89,7 +109,10 @@ std::vector<size_t> findPatternInStream(std::ifstream& file, const std::vector<c
     return positions;
 }
 
-void packFiles(const fs::path& outputExe) {
+void packFiles() {
+    fs::path outputExe(*thisExe);
+    outputExe.replace_filename(outputExe.stem().string()+"_packed"+outputExe.extension().string());
+
     std::vector<FileInfo> files;
     
     uint64_t currentOffset = 0;
@@ -104,7 +127,7 @@ void packFiles(const fs::path& outputExe) {
         auto dir=dirs.front();
         dirs.pop();
         for (const auto& entry : fs::directory_iterator(dir)) {
-            if(dir==thisDir && (entry.path().filename() == outputExe || entry.path().filename()==thisExe->filename())){
+            if(dir==thisDir && (entry.path().filename() == outputExe.filename() || entry.path().filename()==thisExe->filename())){
                 continue;
             }
             if(entry.is_symlink()){
@@ -172,7 +195,8 @@ void packFiles(const fs::path& outputExe) {
     std::cout << "Successfully packed " << files.size() << " files into " << outputExe << std::endl;
 }
 
-void extractFiles(const fs::path& inputExe) {
+const char *extractFiles() {
+    const fs::path& inputExe=*thisExe;
     auto thisDir=thisExe->parent_path();
     if(thisDir==""){
         thisDir=".";
@@ -180,10 +204,8 @@ void extractFiles(const fs::path& inputExe) {
     std::ifstream exe(inputExe, std::ios::binary);
     auto foundMagic=findPatternInStream(exe,std::vector<char>(_magicString,_magicString+32),1);
     if (foundMagic.size()==0) {
-        fs::path packedFile(*thisExe);
-        packedFile.replace_filename(packedFile.stem().string()+"_packed"+packedFile.extension().string());
-        packFiles(packedFile);
-        return;
+        packFiles();
+        return "No magic found, pack mode";
     }
     exe.seekg(foundMagic.at(0)+32,std::ios::beg);
     
@@ -214,7 +236,7 @@ void extractFiles(const fs::path& inputExe) {
     exe.read(dataMarker, 11);
     if (strcmp(dataMarker, "DATASECTION") != 0) {
         std::cerr << "Invalid data section marker." << std::endl;
-        return;
+        return "Invalid data section marker.";
     }
     
     uint64_t dataStart = exe.tellg();
@@ -242,22 +264,26 @@ void extractFiles(const fs::path& inputExe) {
     }
     
     std::cout << "Successfully extracted " << files.size() << " files." << std::endl;
+
+    fs::path autorun(thisDir/"autorun");
+    if(fs::is_regular_file(autorun)){
+        std::ifstream autorunIn(autorun,std::ios::binary);
+        autorunIn.seekg(0,std::ios::end);
+        std::string buffer(uint32_t(autorunIn.tellg())+1,0);
+        autorunIn.seekg(0,std::ios::beg);
+        autorunIn.read(buffer.data(),buffer.size());
+        #ifdef _WIN32
+        std::wstring wpath=U8ToWchar(thisDir.string());
+        _wchdir(wpath.c_str());
+        #else
+        chdir(thisDir.string().c_str());
+        #endif
+        system(buffer.c_str());
+    }
+    return nullptr;
 }
 
-#ifdef _WIN32
-std::string ConvertToUTF8(const std::string& str) {
-    int wlen = MultiByteToWideChar(CP_ACP, 0, str.c_str(), -1, nullptr, 0);
-    std::wstring wstr(wlen, 0);
-    MultiByteToWideChar(CP_ACP, 0, str.c_str(), -1, wstr.data(), wlen);
-    
-    int ulen = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    std::string utf8str(ulen, 0);
-    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, utf8str.data(), ulen, nullptr, nullptr);
 
-    utf8str.resize(ulen - 1);
-    return utf8str;
-}
-#endif
 
 int main(int argc,char *argv[]){
     processMagic();
@@ -278,20 +304,9 @@ int main(int argc,char *argv[]){
         thisDir=".";
     }
     if(argc==1){
-        extractFiles(*thisExe);
-        fs::path autorun(thisDir/"autorun");
-        if(fs::is_regular_file(autorun)){
-            std::ifstream autorunIn(autorun,std::ios::binary);
-            autorunIn.seekg(0,std::ios::end);
-            std::string buffer(uint32_t(autorunIn.tellg())+1,0);
-            autorunIn.seekg(0,std::ios::beg);
-            autorunIn.read(buffer.data(),buffer.size());
-            system(buffer.c_str());
-        }
+        extractFiles();
     }else if(strcmp(argv[1],"pack")==0){
-        fs::path packedFile(*thisExe);
-        packedFile.replace_filename(packedFile.stem().string()+"_packed"+packedFile.extension().string());
-        packFiles(packedFile.string());
+        packFiles();
     }
 }
 
